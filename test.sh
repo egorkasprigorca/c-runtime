@@ -22,6 +22,6 @@ log_message() {
 
 # Infinite loop to log messages every 5 seconds
 while true; do
-    log_message_to_file "This is a periodic log message."
+    log_message "This is a periodic log message."
     sleep 5  # Sleep for 5 seconds (you can change this interval)
 done

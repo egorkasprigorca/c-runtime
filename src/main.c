@@ -22,6 +22,10 @@ static int sys_clone(unsigned long flags, void *child_stack) {
     return (int)syscall(56, flags, child_stack);
 }
 
+typedef struct {
+    uint8_t detach;
+} container_run_opts;
+
 int set_usernamespace(const pid_t pid, const uid_t host_uid, const gid_t host_gid) {
     char path[64];
     char line[64];
@@ -51,41 +55,34 @@ int set_usernamespace(const pid_t pid, const uid_t host_uid, const gid_t host_gi
     return 0;
 }
 
-pid_t container_run(const uint8_t detach, const uid_t host_uid, const uid_t host_gid, const char *command) {
+pid_t container_run(container_run_opts *run_opts, const uid_t host_uid, const uid_t host_gid, const char *command) {
     pid_t pid;
     int unshare_flags = CLONE_NEWUSER | CLONE_NEWUTS;
-    unshare_flags = unshare_flags | (detach ? 0 : SIGCHLD);
+    unshare_flags = unshare_flags | (run_opts ? 0 : SIGCHLD);
     pid = sys_clone(unshare_flags, NULL);
     if (pid < 0)
         err(EXIT_FAILURE, "clone");
     if (pid > 0)
         return pid;
-    if (detach && setsid() < 0) {
+    if (run_opts && setsid() < 0) {
         err(EXIT_FAILURE, "setsid");
     }
     execvp(command, NULL);
     return pid;
 }
 
-struct _container_run_opts {
-    uint8_t detach;
-};
-typedef struct _container_run_opts container_run_opts;
-
 container_run_opts *parse_args(int argc, char **argv) {
-    container_run_opts opts;
-    for (uint32_t i = 1; i < argc; i++) {
-        char *arg = argv[i];
-        switch (arg) {
-            case '-d':
-
+    container_run_opts *opts = malloc(sizeof(container_run_opts));
+    for (uint32_t i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-d") != 0) {
+            opts->detach = 1;
         }
     }
+    return opts;
 }
 
 int main(int argc, char *argv[]) {
     container_run_opts *run_opts = parse_args(argc, argv);
-    uint8_t detach = 1;
     uid_t host_uid = getuid();
     uid_t host_gid = getgid();
     int ret;
@@ -94,7 +91,8 @@ int main(int argc, char *argv[]) {
         command = argv[1];
     else
         command = "bash";
-    ret = container_run(detach, host_uid, host_gid, command);
+    printf("Container run opts\n\tdetach: %d", run_opts->detach);
+    ret = container_run(run_opts, host_uid, host_gid, command);
     set_usernamespace(ret, host_uid, host_gid);
     printf("Container pid: %d\n ", ret);
     while (1) {
@@ -103,10 +101,11 @@ int main(int argc, char *argv[]) {
         if (r < 0) {
             if (errno == EINTR)
                 continue;
+            free(run_opts);
             return EXIT_FAILURE;
         }
         if (WIFEXITED(status) || WIFSIGNALED(status))
+            free(run_opts);
             return WEXITSTATUS(status);
     }
-    return 0;
 }
