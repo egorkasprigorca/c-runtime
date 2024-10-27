@@ -6,17 +6,11 @@
 #include <sched.h>
 #include <err.h>
 #include <errno.h>
-#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/types.h>
-#include <sys/utsname.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 static int sys_clone(unsigned long flags, void *child_stack) {
     return (int)syscall(56, flags, child_stack);
@@ -58,13 +52,13 @@ int set_usernamespace(const pid_t pid, const uid_t host_uid, const gid_t host_gi
 pid_t container_run(container_run_opts *run_opts, const uid_t host_uid, const uid_t host_gid, const char *command) {
     pid_t pid;
     int unshare_flags = CLONE_NEWUSER | CLONE_NEWUTS;
-    unshare_flags = unshare_flags | (run_opts ? 0 : SIGCHLD);
+    unshare_flags = unshare_flags | (run_opts->detach ? 0 : SIGCHLD);
     pid = sys_clone(unshare_flags, NULL);
     if (pid < 0)
         err(EXIT_FAILURE, "clone");
     if (pid > 0)
         return pid;
-    if (run_opts && setsid() < 0) {
+    if (run_opts->detach && setsid() < 0) {
         err(EXIT_FAILURE, "setsid");
     }
     execvp(command, NULL);
@@ -74,11 +68,26 @@ pid_t container_run(container_run_opts *run_opts, const uid_t host_uid, const ui
 container_run_opts *parse_args(int argc, char **argv) {
     container_run_opts *opts = malloc(sizeof(container_run_opts));
     for (uint32_t i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-d") != 0) {
+        if (strcmp(argv[i], "-d") == 0) {
             opts->detach = 1;
         }
     }
     return opts;
+}
+
+int detach_process() {
+    pid_t pid;
+    if (setsid() < 0)
+        return -1;
+    pid = fork();
+    if (pid < 0)
+        return -1;
+    if (pid != 0)
+        _exit(EXIT_SUCCESS);
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -91,10 +100,21 @@ int main(int argc, char *argv[]) {
         command = argv[1];
     else
         command = "bash";
-    printf("Container run opts\n\tdetach: %d", run_opts->detach);
+    if (run_opts->detach) {
+        ret = fork();
+        if (ret)
+            return 0;
+        ret = detach_process();
+        if (ret < 0)
+            err(EXIT_FAILURE, "detach process");
+    }
     ret = container_run(run_opts, host_uid, host_gid, command);
     set_usernamespace(ret, host_uid, host_gid);
+    printf("Detach %d\n", run_opts->detach);
     printf("Container pid: %d\n ", ret);
+    if (run_opts->detach)
+        return ret;
+    printf("yes");
     while (1) {
         int status;
         int r = waitpid(ret, &status, 0);
