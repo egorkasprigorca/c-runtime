@@ -67,8 +67,25 @@ pid_t container_run(const uint8_t detach, const uid_t host_uid, const uid_t host
     return pid;
 }
 
+struct _container_run_opts {
+    uint8_t detach;
+};
+typedef struct _container_run_opts container_run_opts;
+
+container_run_opts *parse_args(int argc, char **argv) {
+    container_run_opts opts;
+    for (uint32_t i = 1; i < argc; i++) {
+        char *arg = argv[i];
+        switch (arg) {
+            case '-d':
+
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
-    uint8_t detach = 0;
+    container_run_opts *run_opts = parse_args(argc, argv);
+    uint8_t detach = 1;
     uid_t host_uid = getuid();
     uid_t host_gid = getgid();
     int ret;
