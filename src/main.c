@@ -51,7 +51,7 @@ int set_usernamespace(const pid_t pid, const uid_t host_uid, const gid_t host_gi
     return 0;
 }
 
-pid_t container_run(const uint8_t detach, const uid_t host_uid, const uid_t host_gid) {
+pid_t container_run(const uint8_t detach, const uid_t host_uid, const uid_t host_gid, const char *command) {
     pid_t pid;
     int unshare_flags = CLONE_NEWUSER | CLONE_NEWUTS;
     unshare_flags = unshare_flags | (detach ? 0 : SIGCHLD);
@@ -63,7 +63,7 @@ pid_t container_run(const uint8_t detach, const uid_t host_uid, const uid_t host
     if (detach && setsid() < 0) {
         err(EXIT_FAILURE, "setsid");
     }
-    execvp("bash", NULL);
+    execvp(command, NULL);
     return pid;
 }
 
@@ -72,7 +72,12 @@ int main(int argc, char *argv[]) {
     uid_t host_uid = getuid();
     uid_t host_gid = getgid();
     int ret;
-    ret = container_run(detach, host_uid, host_gid);
+    char *command;
+    if (argv[1])
+        command = argv[1];
+    else
+        command = "bash";
+    ret = container_run(detach, host_uid, host_gid, command);
     set_usernamespace(ret, host_uid, host_gid);
     printf("Container pid: %d\n ", ret);
     while (1) {
