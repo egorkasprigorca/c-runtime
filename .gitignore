@@ -1,3 +1,5 @@
 buildDir
 .idea
 *.log
+.vscode
+*.pid

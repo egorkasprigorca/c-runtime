@@ -9,11 +9,12 @@
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
 static int sys_clone(unsigned long flags, void *child_stack) {
-    return (int)syscall(56, flags, child_stack);
+    return (int)syscall(__NR_clone, flags, child_stack);
 }
 
 typedef struct {
@@ -110,11 +111,14 @@ int main(int argc, char *argv[]) {
     }
     ret = container_run(run_opts, host_uid, host_gid, command);
     set_usernamespace(ret, host_uid, host_gid);
-    printf("Detach %d\n", run_opts->detach);
-    printf("Container pid: %d\n ", ret);
-    if (run_opts->detach)
+    if (run_opts->detach) {
+        FILE *pid_file = fopen("../mydaemon.pid", "w");
+        if (pid_file != NULL) {
+            fprintf(pid_file, "%d\n", ret);
+            fclose(pid_file);
+        }
         return ret;
-    printf("yes");
+    }
     while (1) {
         int status;
         int r = waitpid(ret, &status, 0);
