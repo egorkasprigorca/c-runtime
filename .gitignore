@@ -1,5 +1,7 @@
-buildDir
+builddir
+build
 .idea
 *.log
 .vscode
 *.pid
+alpine_fs

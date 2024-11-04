@@ -12,13 +12,21 @@
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/mount.h>
+#include <sys/stat.h>
 
 static int sys_clone(unsigned long flags, void *child_stack) {
-    return (int)syscall(__NR_clone, flags, child_stack);
+    return (int)syscall(SYS_clone, flags, child_stack);
+}
+
+static int pivot_root(const char *new_root, const char *put_old) {
+    return syscall(SYS_pivot_root, new_root, put_old);
 }
 
 typedef struct {
     uint8_t detach;
+    char **args;
+    uint8_t args_size;
 } container_run_opts;
 
 int set_usernamespace(const pid_t pid, const uid_t host_uid, const gid_t host_gid) {
@@ -50,9 +58,38 @@ int set_usernamespace(const pid_t pid, const uid_t host_uid, const gid_t host_gi
     return 0;
 }
 
+int set_rootfs() {
+    int ret;
+    char buf[128];
+    // getcwd(buf, sizeof(buf));
+    // printf("Path: %s\n", buf);
+    chdir("..");
+    getcwd(buf, sizeof(buf));
+    printf("Path: %s\n", buf);
+    ret = mount("root_fs", "root_fs", "", MS_BIND, "");
+    if (ret < 0)
+        err(EXIT_FAILURE, "mount");
+    ret = mkdir("root_fs/old_root", 0777);
+    if (ret < 0 && errno != EEXIST)
+        err(EXIT_FAILURE, "mkdir old_root");
+    ret = pivot_root("root_fs", "root_fs/old_root");
+    if (ret < 0)
+        err(EXIT_FAILURE, "pivot_root");
+    // ret = chdir("/");
+    // if (ret < 0)
+    //     err(EXIT_FAILURE, "chdir");
+    ret = chroot("/");
+    if (ret < 0)
+        err(EXIT_FAILURE, "chroot");
+    // ret = umount2("old_root", MNT_DETACH);
+    // if (ret < 0)
+    //     err(EXIT_FAILURE, "umount2");
+    return ret;
+}
+
 pid_t container_run(container_run_opts *run_opts, const uid_t host_uid, const uid_t host_gid, const char *command) {
     pid_t pid;
-    int unshare_flags = CLONE_NEWUSER | CLONE_NEWUTS;
+    int unshare_flags = CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS;
     unshare_flags = unshare_flags | (run_opts->detach ? 0 : SIGCHLD);
     pid = sys_clone(unshare_flags, NULL);
     if (pid < 0)
@@ -62,17 +99,35 @@ pid_t container_run(container_run_opts *run_opts, const uid_t host_uid, const ui
     if (run_opts->detach && setsid() < 0) {
         err(EXIT_FAILURE, "setsid");
     }
-    execvp(command, NULL);
-    return pid;
+    set_rootfs();
+    int ret = execvp(run_opts->args[1], &run_opts->args[1]);
+    if (ret < 0)
+        err(EXIT_FAILURE, "execvp");
+    return 0;
 }
 
 container_run_opts *parse_args(int argc, char **argv) {
     container_run_opts *opts = malloc(sizeof(container_run_opts));
-    for (uint32_t i = 2; i < argc; i++) {
-        if (strcmp(argv[i], "-d") == 0) {
-            opts->detach = 1;
+    opts->detach = 0; // Initialize detach to 0
+    opts->args_size = 0;
+    opts->args = malloc((argc - 1) * sizeof(char*)); // Allocate memory for args
+
+    for (uint32_t i = 1; i < argc; i++) {
+        char *word = argv[i]; // Use argv[i] instead of argv[1]
+        
+        if (word[0] == '-') {
+            // Check for flags
+            if (strcmp(word, "-d") == 0) {
+                opts->detach = 1; // Set detach flag
+            }
+            // You can add more flags here as needed
+        } else {
+            // Collect non-flag arguments
+            opts->args[opts->args_size] = strdup(word); // Duplicate the string
+            opts->args_size++;
         }
     }
+
     return opts;
 }
 
