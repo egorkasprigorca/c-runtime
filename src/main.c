@@ -30,6 +30,23 @@ typedef struct {
     char **command_args;
 } container_opts_t;
 
+static int
+daemonize() {
+    pid_t pid = fork();
+    if (pid < 0)
+        err(EXIT_FAILURE, "fork");
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+    if (setsid() < 0)
+        err(EXIT_FAILURE, "setsid");
+    pid = fork();
+    if (pid < 0)
+        err(EXIT_FAILURE, "fork");
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+    return 0;
+}
+
 #define STACKSIZE (1024*1024)
 static char container_stack[STACKSIZE];
 
@@ -91,6 +108,8 @@ int container_run(void *arg) {
     char buf[2];
     container_opts_t *run_opts = (container_opts_t*)arg;
     int n = read(run_opts->reader_pipe, buf, 2);
+    if (run_opts->detach && setsid() < 0)
+        err(EXIT_FAILURE, "Couldn't setsid");
     setup_rootfs("../bundle");
     int res = execvp(run_opts->command, run_opts->command_args);
     if (res == -1)
@@ -104,20 +123,34 @@ int main(int argc, char *argv[]) {
         err(EXIT_FAILURE, "Failed to create communication pipe");
     }
     container_opts_t opts = {
-        .detach = 0,
+        .detach = 1,
         .command = argv[1],
         .command_args = &argv[1],
         .reader_pipe = fds[0]
     };
+    if (opts.detach) {
+        if (daemonize() < 0)
+            err(EXIT_FAILURE, "Failed to daemonize");
+    }
     int flags = CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS | SIGCHLD;
     pid_t pid = clone(container_run, container_stack + STACKSIZE, flags, &opts);
     setup_userns(pid, getuid(), getgid());
     int n = write(fds[1], "OK", 2);
     if (pid < 0)
         err(EXIT_FAILURE, "Failed to create container process");
-    int res = waitpid(pid, NULL, 0);
-    if (res == -1)
-        err(EXIT_FAILURE, "Waitpid failed");
-    printf("Child terminated\n");
-    return 0;
+    if (opts.detach) {
+        printf("Detached process pid %d\n", pid);
+        return 0;
+    }
+    while (1) {
+        int status;
+        int r = waitpid(pid, &status, 0);
+        if (r < 0) {
+            if (errno == EINTR)
+                continue;
+            return EXIT_FAILURE;
+        }
+        if (WIFEXITED(status) || WIFSIGNALED(status))
+            return WEXITSTATUS(status);
+    }
 }
