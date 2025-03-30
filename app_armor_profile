@@ -1,0 +1,33 @@
+#include <tunables/global>
+
+/home/egor.bolotov/projects/coding/c-runtime/buildDir/c_runtime {
+  # Include default abstractions
+  include <abstractions/base>
+  include <abstractions/nameservice>  # Optional: DNS, etc.
+
+  # Allow necessary capabilities
+  capability setuid,
+  capability setgid,
+  capability sys_admin,  # Required for userns
+  capability sys_chroot,
+
+  # Allow unshare(CLONE_NEWUSER) for userns
+  deny @{PROC}/*/setgroups rw,  # Block setgroups (unless needed)
+  allow @{PROC}/[0-9]*/uid_map rw,
+  allow @{PROC}/[0-9]*/gid_map rw,
+
+  # Allow mounting proc/sysfs (if needed)
+  mount fstype=proc -> /proc/,
+  mount fstype=sysfs -> /sys/,
+
+  # Allow writing to /etc/subuid and /etc/subgid (if managing subordinate IDs)
+  /etc/subuid rw,
+  /etc/subgid rw,
+
+  # Allow the binary to execute
+  /usr/bin/your_container_tool mr,
+  /usr/bin/unshare ix,  # Allow unshare if used
+
+  # Deny everything else (default deny)
+  deny /** rwlk,
+}
