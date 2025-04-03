@@ -44,6 +44,9 @@ daemonize() {
         err(EXIT_FAILURE, "fork");
     if (pid > 0)
         exit(EXIT_SUCCESS);
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
     return 0;
 }
 
@@ -79,6 +82,14 @@ int setup_userns(const pid_t pid, const int uid, const int gid) {
     return 0;
 }
 
+int setup_procfs() {
+    if (mkdir("/proc", 0555) < 0 && errno != EEXIST)
+        err(EXIT_FAILURE, "Failed to create /proc dir");
+    if (mount("proc", "/proc", "proc", 0, "") < 0)
+        err(EXIT_FAILURE, "Failed to mount procfs");
+    return 0;
+}
+
 int setup_rootfs(const char *bundle_path) {
     printf("Setting up rootfs\n");
     const char *oldrootfs_path = ".oldrootfs";
@@ -98,19 +109,20 @@ int setup_rootfs(const char *bundle_path) {
         err(EXIT_FAILURE, "Failed to pivot root");
     if (chdir("/") == -1)
         err(EXIT_FAILURE, "Failed to chroot /");
+    setup_procfs();
     if (umount2(oldrootfs_path, MNT_DETACH) == -1)
         err(EXIT_FAILURE, "Failed to umount rootfs");
     return 0;
 }
 
 int container_run(void *arg) {
-    prctl(PR_SET_PDEATHSIG, SIGKILL);
     char buf[2];
     container_opts_t *run_opts = (container_opts_t*)arg;
     int n = read(run_opts->reader_pipe, buf, 2);
     if (run_opts->detach && setsid() < 0)
         err(EXIT_FAILURE, "Couldn't setsid");
-    setup_rootfs("../bundle");
+    setup_rootfs("bundle");
+    putenv("PATH=/bin:/usr/bin:/usr/sbin");
     int res = execvp(run_opts->command, run_opts->command_args);
     if (res == -1)
         err(EXIT_FAILURE, "Failed to execute container process command");
@@ -123,7 +135,7 @@ int main(int argc, char *argv[]) {
         err(EXIT_FAILURE, "Failed to create communication pipe");
     }
     container_opts_t opts = {
-        .detach = 1,
+        .detach = 0,
         .command = argv[1],
         .command_args = &argv[1],
         .reader_pipe = fds[0]
@@ -132,25 +144,20 @@ int main(int argc, char *argv[]) {
         if (daemonize() < 0)
             err(EXIT_FAILURE, "Failed to daemonize");
     }
-    int flags = CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS | SIGCHLD;
+    int flags = CLONE_NEWPID | CLONE_NEWUSER | CLONE_NEWUTS | CLONE_NEWNS | SIGCHLD;
     pid_t pid = clone(container_run, container_stack + STACKSIZE, flags, &opts);
     setup_userns(pid, getuid(), getgid());
     int n = write(fds[1], "OK", 2);
     if (pid < 0)
         err(EXIT_FAILURE, "Failed to create container process");
     if (opts.detach) {
-        printf("Detached process pid %d\n", pid);
-        return 0;
+        FILE *file = fopen("../daemonpid.txt", "w+");
+        fprintf(file, "%d", pid);
+        return pid;
     }
-    while (1) {
-        int status;
-        int r = waitpid(pid, &status, 0);
-        if (r < 0) {
-            if (errno == EINTR)
-                continue;
-            return EXIT_FAILURE;
-        }
-        if (WIFEXITED(status) || WIFSIGNALED(status))
-            return WEXITSTATUS(status);
-    }
+    int status;
+    int r = waitpid(pid, &status, 0);
+    if (r < 0)
+        err(EXIT_FAILURE, "Failed waitpid");
+    return 0;
 }
