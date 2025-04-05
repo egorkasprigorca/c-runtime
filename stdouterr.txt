@@ -1,0 +1,7 @@
+Preparing user namespace
+bin
+etc
+lib
+proc
+usr
+var

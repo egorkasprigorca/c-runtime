@@ -30,6 +30,13 @@ typedef struct {
     char **command_args;
 } container_opts_t;
 
+typedef struct {
+    char* destination;
+    char* type;
+    char* source;
+    char** options;
+} mount_t;
+
 static int
 daemonize() {
     pid_t pid = fork();
@@ -45,8 +52,6 @@ daemonize() {
     if (pid > 0)
         exit(EXIT_SUCCESS);
     fclose(stdin);
-    fclose(stdout);
-    fclose(stderr);
     return 0;
 }
 
@@ -115,6 +120,10 @@ int setup_rootfs(const char *bundle_path) {
     return 0;
 }
 
+int setup_mounts() {
+    return 0;
+}
+
 int container_run(void *arg) {
     char buf[2];
     container_opts_t *run_opts = (container_opts_t*)arg;
@@ -131,16 +140,22 @@ int container_run(void *arg) {
 
 int main(int argc, char *argv[]) {
     int fds[2];
+    int stdout_writer = STDOUT_FILENO;
+    int stderr_writer = STDERR_FILENO;
     if (pipe(fds) == -1) {
         err(EXIT_FAILURE, "Failed to create communication pipe");
     }
     container_opts_t opts = {
-        .detach = 0,
+        .detach = 1,
         .command = argv[1],
         .command_args = &argv[1],
         .reader_pipe = fds[0]
     };
     if (opts.detach) {
+        FILE *ios = fopen("stdouterr.txt", "w+");
+        dup2(fileno(ios), STDOUT_FILENO);
+        dup2(fileno(ios), STDERR_FILENO);
+        fclose(ios);
         if (daemonize() < 0)
             err(EXIT_FAILURE, "Failed to daemonize");
     }
@@ -151,7 +166,7 @@ int main(int argc, char *argv[]) {
     if (pid < 0)
         err(EXIT_FAILURE, "Failed to create container process");
     if (opts.detach) {
-        FILE *file = fopen("../daemonpid.txt", "w+");
+        FILE *file = fopen("daemonpid.txt", "w+");
         fprintf(file, "%d", pid);
         return pid;
     }
